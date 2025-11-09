@@ -55,27 +55,6 @@ local bone_mapping = {
     ["scope_link"] = "frame scope link"
 }
 
--- Function to check if file exists
---local function file_exists(filename)
---    local file = io.open(filename, "r")
---    if file then
---        file:close()
---        return true
---    end
---    return false
---end
-
--- Function to check if directory exists (Windows)
-local function directory_exists(dirname)
-    local pipe = io.popen('dir "' .. dirname .. '" 2>nul')
-    if pipe then
-        local result = pipe:read("*a")
-        pipe:close()
-        return result and result ~= ""
-    end
-    return false
-end
-
 -- Function to read file content using luna
 local function read_file(filename)
     return luna.file.read(filename)
@@ -110,11 +89,43 @@ local function replace_bone_names(content, mapping)
     return table.concat(lines, "\n"), renamed_count
 end
 
--- Function to create directory using Windows commands
+-- Function to check if directory exists using luna
+local function directory_exists(dirname)
+    -- Try to create a test file in the directory to see if it exists
+    local testpath = dirname .. "/luna_test.tmp"
+    local file = io.open(testpath, "w")
+    if file then
+        file:close()
+        os.remove(testpath) -- Clean up
+        return true
+    end
+    return false
+end
+
+-- Function to create directory using hybrid approach (OS + luna validation)
 local function create_directory(dirname)
     if not directory_exists(dirname) then
-        os.execute('mkdir "' .. dirname .. '" 2>nul')
+        print("Creating directory: " .. dirname)
+
+        -- Use OS command to create directory
+        local result = os.execute('mkdir "' .. dirname .. '" 2>NUL')
+
+        -- Validate creation using luna by trying to write a test file
+        local testpath = dirname .. "/luna_test.tmp"
+        local file = io.open(testpath, "w")
+        if file then
+            file:close()
+            os.remove(testpath) -- Clean up
+            print("  -> Successfully created: " .. dirname)
+            return true
+        else
+            print("  -> Warning: Could not create directory: " .. dirname)
+            return false
+        end
+    else
+        print("Directory already exists: " .. dirname)
     end
+    return true
 end
 
 -- Function to get animation files (JMM and JMO) in a directory
@@ -176,17 +187,17 @@ end
 -- Function to process a single file
 local function process_file(input_path, output_path, mapping)
     print("Processing: " .. get_filename(input_path))
-    
+
     -- Read the original file
     local content = read_file(input_path)
     if not content then
         print("  Error: Could not read file")
         return false, 0
     end
-    
+
     -- Replace bone names
     local new_content, renamed_count = replace_bone_names(content, mapping)
-    
+
     -- Add an extra blank line at the end to match original format
     if not luna.string.endswith(new_content, "\n\n") then
         if luna.string.endswith(new_content, "\n") then
@@ -195,7 +206,7 @@ local function process_file(input_path, output_path, mapping)
             new_content = new_content .. "\n"
         end
     end
-    
+
     -- Write the new file
     if write_file(output_path, new_content) then
         print("  -> Saved to: " .. get_filename(output_path))
@@ -229,7 +240,12 @@ local function main()
     end
 
     -- Ensure converted folder exists
-    create_directory(converted_folder)
+    if not create_directory(converted_folder) then
+        print("Error: Could not create output folder '" .. converted_folder .. "'!")
+        print("Please check your permissions and try again.")
+        return
+    end
+    print("")
 
     -- Find all animation files (JMM and JMO) in the animations folder
     local animation_files = get_animation_files(animations_folder)
